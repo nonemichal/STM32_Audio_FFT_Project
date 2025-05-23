@@ -31,7 +31,9 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
+typedef enum {
+	BUFFER_OFFSET_NONE, BUFFER_OFFSET_HALF,
+} Buffer_offset;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -40,13 +42,18 @@
 #define RX_BUFFER_SIZE 			128 						/* Length of audio receive buffer */
 #define DEC_BUFFER_SIZE 		16 							/* Length of audio buffer after decimation */
 #define PCM_BUFFER_SIZE 		512 						/* Length of audio PCM buffer */
-#define FFT_BUFFER_SIZE 		PDM_BUFFER_SIZE + 2 		/* Length of FFT output buffer */
+#define NORMALIZED_BUFFER_SIZE 	512 						/* Length of audio normalized buffer */
+#define FFT_LENGTH 				512 						/* Length of FFT samples */
+#define FFT_BUFFER_SIZE 		FFT_LENGTH + 2 				/* Length of FFT output buffer */
 #define FFT_MAG_BUFFER_SIZE 	FFT_BUFFER_SIZE / 2 		/* Length of FFT magnitude buffer*/
+
+#define AUDIO_FLAG_HALF  		0x01						/* Flag for half callback */
+#define AUDIO_FLAG_FULL  		0x02						/* Flag for full callback */
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-
+#define SWAP_UINT16(x) (uint16_t)( ((x) << 8) | ((x) >> 8) )
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
@@ -70,17 +77,19 @@ const osThreadAttr_t FFTProcessing_attributes =
 osThreadId_t DisplayOutputHandle;
 const osThreadAttr_t DisplayOutput_attributes = { .name = "DisplayOutput",
 		.stack_size = 128 * 4, .priority = (osPriority_t) osPriorityNormal, };
-/* Definitions for QueueFFTOutput */
-osMessageQueueId_t QueueFFTOutputHandle;
-const osMessageQueueAttr_t QueueFFTOutput_attributes = { .name =
-		"QueueFFTOutput" };
+/* Definitions for PCM_Mutex */
+osMutexId_t PCM_MutexHandle;
+const osMutexAttr_t PCM_Mutex_attributes = { .name = "PCM_Mutex" };
+/* Definitions for FFT_MagMutex */
+osMutexId_t FFT_MagMutexHandle;
+const osMutexAttr_t FFT_MagMutex_attributes = { .name = "FFT_MagMutex" };
 /* Definitions for AudioReady */
 osEventFlagsId_t AudioReadyHandle;
 const osEventFlagsAttr_t AudioReady_attributes = { .name = "AudioReady" };
 /* USER CODE BEGIN PV */
-int16_t rx_buff[RX_BUFFER_SIZE] = { 0 }; /* Audio receive buffer */
-int16_t dec_buff[DEC_BUFFER_SIZE] = { 0 }; /* Audio buffer after decimation */
-int16_t pcm_buff[PCM_BUFFER_SIZE] = { 0 }; /* Audio PCM buffer */
+uint16_t rx_buff[RX_BUFFER_SIZE] = { 0 }; /* Audio receive buffer */
+uint16_t pcm_buff[PCM_BUFFER_SIZE] = { 0 }; /* Audio PCM buffer */
+float normalized_buff[NORMALIZED_BUFFER_SIZE] = { 0 }; /* Audio normalized buffer */
 
 uint16_t callback_counter = 0; /* Counter of callback */
 uint32_t audio_buff_offset = 0; /* Offset of audio buffer */
@@ -100,7 +109,8 @@ void FFTProcessingTask(void *argument);
 void DisplayOutputTask(void *argument);
 
 /* USER CODE BEGIN PFP */
-
+void pdm_to_pcm(uint16_t *rx_buff, uint16_t *dec_buff,
+		Buffer_offset buffer_offset);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -146,16 +156,25 @@ int main(void) {
 	/* Display driver initialize */
 	ILI9341_Init();
 	ILI9341_FillScreen(ILI9341_BLACK);
+	#ifdef TEST
+	ILI9341_DrawImage(0, 0, 240, 240, (uint16_t*) test_img_240x240);
+	#endif
 
 	/* DMA initialize */
 	HAL_I2S_Receive_DMA(&hi2s2, (uint16_t*) rx_buff, RX_BUFFER_SIZE);
 
 	/* FFT initialize */
-	arm_rfft_fast_init_512_f32(&fft_audio_instance);
+	arm_rfft_fast_init_f32(&fft_audio_instance, FFT_LENGTH);
 	/* USER CODE END 2 */
 
 	/* Init scheduler */
 	osKernelInitialize();
+	/* Create the mutex(es) */
+	/* creation of PCM_Mutex */
+	PCM_MutexHandle = osMutexNew(&PCM_Mutex_attributes);
+
+	/* creation of FFT_MagMutex */
+	FFT_MagMutexHandle = osMutexNew(&FFT_MagMutex_attributes);
 
 	/* USER CODE BEGIN RTOS_MUTEX */
 	/* add mutexes, ... */
@@ -168,11 +187,6 @@ int main(void) {
 	/* USER CODE BEGIN RTOS_TIMERS */
 	/* start timers, add new ones, ... */
 	/* USER CODE END RTOS_TIMERS */
-
-	/* Create the queue(s) */
-	/* creation of QueueFFTOutput */
-	QueueFFTOutputHandle = osMessageQueueNew(16, sizeof(uint16_t),
-			&QueueFFTOutput_attributes);
 
 	/* USER CODE BEGIN RTOS_QUEUES */
 	/* add queues, ... */
@@ -195,7 +209,6 @@ int main(void) {
 	/* add threads, ... */
 	/* USER CODE END RTOS_THREADS */
 
-	/* Create the event(s) */
 	/* creation of AudioReady */
 	AudioReadyHandle = osEventFlagsNew(&AudioReady_attributes);
 
@@ -435,7 +448,33 @@ static void MX_GPIO_Init(void) {
 }
 
 /* USER CODE BEGIN 4 */
+void HAL_I2S_RxHalfCpltCallback(I2S_HandleTypeDef *hi2s) {
+	/* Only when the interrupt is triggered by I2S connected to the microphone */
+	if (hi2s->Instance == SPI2) {
+		osEventFlagsSet(AudioReadyHandle, AUDIO_FLAG_HALF);
+	}
+}
 
+void HAL_I2S_RxCpltCallback(I2S_HandleTypeDef *hi2s) {
+	/* Only when the interrupt is triggered by I2S connected to the microphone */
+	if (hi2s->Instance == SPI2) {
+		osEventFlagsSet(AudioReadyHandle, AUDIO_FLAG_FULL);
+	}
+}
+
+void pdm_to_pcm(uint16_t *rx_buff, uint16_t *dec_buff,
+		Buffer_offset buffer_offset) {
+	static uint16_t rx_swap_buff[RX_BUFFER_SIZE / 2] = { 0 };
+
+	/* PDM swap endianness */
+	for (uint32_t i = 0; i < RX_BUFFER_SIZE / 2; i++) {
+		rx_swap_buff[i] = SWAP_UINT16(
+				rx_buff[i + (RX_BUFFER_SIZE / 2) * buffer_offset]);
+	}
+
+	/* PDM to PCM filter */
+	PDM_Filter(rx_swap_buff, dec_buff, &PDM1_filter_handler);
+}
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_AudioCaptureTask */
@@ -447,9 +486,22 @@ static void MX_GPIO_Init(void) {
 /* USER CODE END Header_AudioCaptureTask */
 void AudioCaptureTask(void *argument) {
 	/* USER CODE BEGIN 5 */
+	uint16_t dec_buff[DEC_BUFFER_SIZE] = { 0 }; /* Audio buffer after decimation */
+	Buffer_offset buffer_offset = BUFFER_OFFSET_NONE;
+
 	/* Infinite loop */
 	for (;;) {
-		osDelay(1);
+		uint32_t flags = osEventFlagsWait(AudioReadyHandle,
+		AUDIO_FLAG_HALF | AUDIO_FLAG_FULL,
+		osFlagsWaitAny, osWaitForever);
+
+		if (flags & AUDIO_FLAG_HALF) {
+			buffer_offset = BUFFER_OFFSET_HALF;
+		} else if (flags & AUDIO_FLAG_FULL) {
+			buffer_offset = BUFFER_OFFSET_NONE;
+		}
+
+		pdm_to_pcm(rx_buff, dec_buff, buffer_offset);
 	}
 	/* USER CODE END 5 */
 }
