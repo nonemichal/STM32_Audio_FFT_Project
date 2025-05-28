@@ -24,6 +24,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdbool.h>
+#include <stdint.h>
 #include "ili9341.h"
 #include "arm_math.h"
 #include "test.h"
@@ -38,22 +39,24 @@ typedef enum {
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define AUDIO_FS 				16000 						/* Sampling frequency */
-#define RX_BUFFER_SIZE 			128 						/* Length of audio receive buffer */
-#define DEC_BUFFER_SIZE 		16 							/* Length of audio buffer after decimation */
-#define PCM_BUFFER_SIZE 		512 						/* Length of audio PCM buffer */
-#define NORMALIZED_BUFFER_SIZE 	512 						/* Length of audio normalized buffer */
-#define FFT_LENGTH 				512 						/* Length of FFT samples */
-#define FFT_BUFFER_SIZE 		FFT_LENGTH + 2 				/* Length of FFT output buffer */
-#define FFT_MAG_BUFFER_SIZE 	FFT_BUFFER_SIZE / 2 		/* Length of FFT magnitude buffer*/
+#define AUDIO_FS 				16000 								/* Sampling frequency */
+#define RX_BUFFER_SIZE 			128 								/* Length of audio receive buffer */
+#define DEC_BUFFER_SIZE 		16 									/* Length of audio buffer after decimation */
+#define PCM_BUFFER_SIZE 		512 								/* Length of audio PCM buffer */
+#define NORMALIZED_BUFFER_SIZE 	512 								/* Length of audio normalized buffer */
+#define FFT_LENGTH 				512 								/* Length of FFT samples */
+#define FFT_BUFFER_SIZE 		FFT_LENGTH + 2 						/* Length of FFT output buffer */
+#define FFT_MAG_BUFFER_SIZE 	FFT_BUFFER_SIZE / 2 				/* Length of FFT magnitude buffer*/
 
-#define AUDIO_FLAG_HALF  		0x01						/* Flag for half callback */
-#define AUDIO_FLAG_FULL  		0x02						/* Flag for full callback */
+#define AUDIO_FLAG_HALF  		0x01								/* Flag for half callback */
+#define AUDIO_FLAG_FULL  		0x02								/* Flag for full callback */
+
+#define MAX_AUDIO_TASK_COUNTER	(PCM_BUFFER_SIZE / DEC_BUFFER_SIZE) /*  */
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-#define SWAP_UINT16(x) (uint16_t)( ((x) << 8) | ((x) >> 8) )
+#define SWAP_ENDIANESS(x) (uint16_t)( ((x) << 8) | ((x) >> 8) )
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
@@ -88,11 +91,7 @@ osEventFlagsId_t AudioReadyHandle;
 const osEventFlagsAttr_t AudioReady_attributes = { .name = "AudioReady" };
 /* USER CODE BEGIN PV */
 uint16_t rx_buff[RX_BUFFER_SIZE] = { 0 }; /* Audio receive buffer */
-uint16_t pcm_buff[PCM_BUFFER_SIZE] = { 0 }; /* Audio PCM buffer */
-float normalized_buff[NORMALIZED_BUFFER_SIZE] = { 0 }; /* Audio normalized buffer */
-
-uint16_t callback_counter = 0; /* Counter of callback */
-uint32_t audio_buff_offset = 0; /* Offset of audio buffer */
+float32_t normalized_buff[NORMALIZED_BUFFER_SIZE] = { 0 }; /* Audio normalized buffer */
 
 arm_rfft_fast_instance_f32 fft_audio_instance = { 0 }; /* Instance FFT structure */
 /* USER CODE END PV */
@@ -111,6 +110,8 @@ void DisplayOutputTask(void *argument);
 /* USER CODE BEGIN PFP */
 void pdm_to_pcm(uint16_t *rx_buff, uint16_t *dec_buff,
 		Buffer_offset buffer_offset);
+void normalize_buff(uint16_t *pcm_buff, float32_t *normalized_buff,
+		size_t buff_index);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -156,9 +157,9 @@ int main(void) {
 	/* Display driver initialize */
 	ILI9341_Init();
 	ILI9341_FillScreen(ILI9341_BLACK);
-	#ifdef TEST
+#ifdef TEST
 	ILI9341_DrawImage(0, 0, 240, 240, (uint16_t*) test_img_240x240);
-	#endif
+#endif
 
 	/* DMA initialize */
 	HAL_I2S_Receive_DMA(&hi2s2, (uint16_t*) rx_buff, RX_BUFFER_SIZE);
@@ -464,16 +465,29 @@ void HAL_I2S_RxCpltCallback(I2S_HandleTypeDef *hi2s) {
 
 void pdm_to_pcm(uint16_t *rx_buff, uint16_t *dec_buff,
 		Buffer_offset buffer_offset) {
+	// rx_buff - source PDM
+	// dec_buff - destination PCM
 	static uint16_t rx_swap_buff[RX_BUFFER_SIZE / 2] = { 0 };
 
 	/* PDM swap endianness */
-	for (uint32_t i = 0; i < RX_BUFFER_SIZE / 2; i++) {
-		rx_swap_buff[i] = SWAP_UINT16(
+	for (size_t i = 0; i < RX_BUFFER_SIZE / 2; i++) {
+		rx_swap_buff[i] = SWAP_ENDIANESS(
 				rx_buff[i + (RX_BUFFER_SIZE / 2) * buffer_offset]);
 	}
 
 	/* PDM to PCM filter */
 	PDM_Filter(rx_swap_buff, dec_buff, &PDM1_filter_handler);
+}
+
+void normalize_buff(uint16_t *pcm_buff, float32_t *normalized_buff,
+		size_t buff_index) {
+	// pcm_buff - source PCM
+	// normalized_buff - destination normalized pcm
+	for (size_t i = 0; i < DEC_BUFFER_SIZE; i++) {
+		int16_t int_val = (int16_t) pcm_buff[buff_index + i];
+		float32_t float_val = (float32_t) int_val / (float32_t) INT16_MAX;
+		normalized_buff[buff_index + i] = float_val;
+	}
 }
 /* USER CODE END 4 */
 
@@ -486,7 +500,9 @@ void pdm_to_pcm(uint16_t *rx_buff, uint16_t *dec_buff,
 /* USER CODE END Header_AudioCaptureTask */
 void AudioCaptureTask(void *argument) {
 	/* USER CODE BEGIN 5 */
+	uint16_t audio_task_counter = 0;
 	uint16_t dec_buff[DEC_BUFFER_SIZE] = { 0 }; /* Audio buffer after decimation */
+	uint16_t pcm_buff[PCM_BUFFER_SIZE] = { 0 }; /* PCM audio buffer */
 	Buffer_offset buffer_offset = BUFFER_OFFSET_NONE;
 
 	/* Infinite loop */
@@ -501,7 +517,19 @@ void AudioCaptureTask(void *argument) {
 			buffer_offset = BUFFER_OFFSET_NONE;
 		}
 
+		/* Convert PDM sound to PCM sound */
 		pdm_to_pcm(rx_buff, dec_buff, buffer_offset);
+
+		const size_t buff_index = audio_task_counter * DEC_BUFFER_SIZE;
+
+		/* Copy converted data to transmit buffer */
+		memcpy(&pcm_buff[buff_index], dec_buff,
+		DEC_BUFFER_SIZE * 2);
+
+		normalize_buff(pcm_buff, normalized_buff, buff_index);
+
+		audio_task_counter++;
+		audio_task_counter &= MAX_AUDIO_TASK_COUNTER;
 	}
 	/* USER CODE END 5 */
 }
