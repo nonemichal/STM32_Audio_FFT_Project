@@ -43,7 +43,7 @@ void MX_PDM2PCM_Init(void)
   PDM1_filter_handler.endianness = PDM_FILTER_ENDIANNESS_LE;
   PDM1_filter_handler.high_pass_tap = 2122358088;
   PDM1_filter_handler.in_ptr_channels = 1;
-  PDM1_filter_handler.out_ptr_channels = 2;
+  PDM1_filter_handler.out_ptr_channels = 1;
   PDM_Filter_Init(&PDM1_filter_handler);
 
   PDM1_filter_config.decimation_factor = PDM_FILTER_DEC_FACTOR_64;
