@@ -43,9 +43,9 @@ typedef enum {
 #define AUDIO_FS 				16000 								/* Sampling frequency */
 #define RX_BUFFER_SIZE 			128 								/* Length of audio receive buffer */
 #define DEC_BUFFER_SIZE 		16 									/* Length of audio buffer after decimation */
-#define PCM_BUFFER_SIZE 		512									/* Length of audio PCM buffer */
-#define NORMALIZED_BUFFER_SIZE 	512									/* Length of audio normalized buffer */
-#define FFT_LENGTH 				512									/* Length of FFT samples */
+#define PCM_BUFFER_SIZE 		1024									/* Length of audio PCM buffer */
+#define NORMALIZED_BUFFER_SIZE 	1024									/* Length of audio normalized buffer */
+#define FFT_LENGTH 				1024									/* Length of FFT samples */
 #define FFT_BUFFER_SIZE 		(FFT_LENGTH + 2) 					/* Length of FFT output buffer */
 #define FFT_MAG_BUFFER_SIZE 	FFT_BUFFER_SIZE / 2 				/* Length of FFT magnitude buffer*/
 
@@ -78,21 +78,21 @@ SPI_HandleTypeDef hspi1;
 osThreadId_t AudioCaptureHandle;
 const osThreadAttr_t AudioCapture_attributes = {
   .name = "AudioCapture",
-  .stack_size = 512 * 4,
+  .stack_size = 256 * 4,
   .priority = (osPriority_t) osPriorityHigh,
 };
 /* Definitions for FFTProcessing */
 osThreadId_t FFTProcessingHandle;
 const osThreadAttr_t FFTProcessing_attributes = {
   .name = "FFTProcessing",
-  .stack_size = 1024 * 4,
+  .stack_size = 256 * 4,
   .priority = (osPriority_t) osPriorityAboveNormal,
 };
 /* Definitions for DisplayOutput */
 osThreadId_t DisplayOutputHandle;
 const osThreadAttr_t DisplayOutput_attributes = {
   .name = "DisplayOutput",
-  .stack_size = 1024 * 4,
+  .stack_size = 256 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for NormalizedMutex */
@@ -371,7 +371,7 @@ static void MX_I2S2_Init(void)
   hi2s2.Init.Standard = I2S_STANDARD_PHILIPS;
   hi2s2.Init.DataFormat = I2S_DATAFORMAT_16B;
   hi2s2.Init.MCLKOutput = I2S_MCLKOUTPUT_DISABLE;
-  hi2s2.Init.AudioFreq = I2S_AUDIOFREQ_8K;
+  hi2s2.Init.AudioFreq = I2S_AUDIOFREQ_16K;
   hi2s2.Init.CPOL = I2S_CPOL_LOW;
   hi2s2.Init.ClockSource = I2S_CLOCK_PLL;
   hi2s2.Init.FullDuplexMode = I2S_FULLDUPLEXMODE_DISABLE;
@@ -550,6 +550,9 @@ void normalize_buff(const int16_t *pcm_buff, float32_t *normalized_buff,
 	for (size_t i = 0; i < DEC_BUFFER_SIZE; i++) {
 		int16_t int_val = (int16_t) pcm_buff[buff_index + i];
 		float32_t float_val = (float32_t) int_val / (float32_t) INT16_MAX;
+		if ((i > 0) && (float_val > 0.2 || float_val < -0.2)) {
+			float_val = normalized_buff[buff_index + i - 1];
+		}
 		normalized_buff[buff_index + i] = float_val;
 	}
 }
@@ -569,11 +572,6 @@ void fft_compute(float32_t *windowed_buff, float32_t *fft_mag_buff) {
 
 	/* Calculate magnitude from real and imaginary part of FFT */
 	arm_cmplx_mag_f32(fft_out_buff, fft_mag_buff, FFT_MAG_BUFFER_SIZE);
-
-	/* FFT buffer scaling */
-//	for (size_t i = 0; i < FFT_MAG_BUFFER_SIZE; i++) {
-//		fft_mag_buff[i] /= (float32_t) FFT_BUFFER_SIZE;
-//	}
 }
 /* USER CODE END 4 */
 
@@ -588,8 +586,8 @@ void AudioCaptureTask(void *argument)
 {
   /* USER CODE BEGIN 5 */
 	uint16_t audio_task_counter = 0;
-	uint16_t dec_buff[DEC_BUFFER_SIZE] = { 0 }; /* Audio buffer after decimation */
-	int16_t pcm_buff[PCM_BUFFER_SIZE] = { 0 }; /* PCM audio buffer */
+	static uint16_t dec_buff[DEC_BUFFER_SIZE] = { 0 }; /* Audio buffer after decimation */
+	static int16_t pcm_buff[PCM_BUFFER_SIZE] = { 0 }; /* PCM audio buffer */
 	Buffer_offset buffer_offset = BUFFER_OFFSET_NONE;
 
 	/* Infinite loop */
@@ -639,7 +637,7 @@ void AudioCaptureTask(void *argument)
 void FFTProcessingTask(void *argument)
 {
   /* USER CODE BEGIN FFTProcessingTask */
-	float32_t windowed_buff[NORMALIZED_BUFFER_SIZE] = { 0 }; /* Normalized and windowed buffer */
+	static float32_t windowed_buff[NORMALIZED_BUFFER_SIZE] = { 0 }; /* Normalized and windowed buffer */
 	/* Infinite loop */
 	for (;;) {
 		osEventFlagsWait(AudioBuffReadyHandle,
@@ -671,8 +669,8 @@ void FFTProcessingTask(void *argument)
 void DisplayOutputTask(void *argument)
 {
   /* USER CODE BEGIN DisplayOutputTask */
-	int32_t fft_db_buff[FFT_MAG_BUFFER_SIZE] = { 0 };
-	int32_t fft_prev_db_buff[FFT_MAG_BUFFER_SIZE] = { 0 };
+	static int32_t fft_db_buff[FFT_MAG_BUFFER_SIZE] = { 0 };
+	static int32_t fft_prev_db_buff[FFT_MAG_BUFFER_SIZE] = { 0 };
 	/* Infinite loop */
 	for (;;) {
 		osEventFlagsWait(FFTReadyHandle,
@@ -680,7 +678,7 @@ void DisplayOutputTask(void *argument)
 		osFlagsWaitAny, osWaitForever);
 
 		osMutexAcquire(FFTMagMutexHandle, osWaitForever);
-		for (size_t i = 0; i < FFT_MAG_BUFFER_SIZE - 1; i++) {
+		for (size_t i = 0; i < ILI9341_HEIGHT; i++) {
 			/* FFT Magnitude to decibel scale */
 			fft_db_buff[i] = (int32_t) (20 * log10f(fft_mag_buff[i]));
 
