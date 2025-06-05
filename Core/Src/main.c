@@ -669,8 +669,9 @@ void FFTProcessingTask(void *argument)
 void DisplayOutputTask(void *argument)
 {
   /* USER CODE BEGIN DisplayOutputTask */
-	static int32_t fft_db_buff[FFT_MAG_BUFFER_SIZE] = { 0 };
-	static int32_t fft_prev_db_buff[FFT_MAG_BUFFER_SIZE] = { 0 };
+	static int32_t fft_db_buff[ILI9341_HEIGHT] = { 0 };
+	static int32_t fft_prev_db_buff[ILI9341_HEIGHT] = { 0 };
+
 	/* Infinite loop */
 	for (;;) {
 		osEventFlagsWait(FFTReadyHandle,
@@ -680,15 +681,16 @@ void DisplayOutputTask(void *argument)
 		osMutexAcquire(FFTMagMutexHandle, osWaitForever);
 		for (size_t i = 0; i < ILI9341_HEIGHT; i++) {
 			/* FFT Magnitude to decibel scale */
-			fft_db_buff[i] = (int32_t) (20 * log10f(fft_mag_buff[i]));
+			float32_t avg_val = (fft_mag_buff[i * 2] + fft_mag_buff[i * 2 + 1]) / 2;
+			int32_t log_val = (int32_t) (20 * log10f(avg_val));
+			int32_t scaled_val = (log_val + OFFSET_Y) * SCALE_FACTOR;
+			fft_db_buff[i] = scaled_val;
 
 			/* Compare with previous result to reduce drawing */
 			if (fft_prev_db_buff[i] != fft_db_buff[i]) {
 				size_t x = ILI9341_WIDTH - i;
-				size_t prev_y = (fft_prev_db_buff[i] + OFFSET_Y) * SCALE_FACTOR;
-				size_t y = (fft_db_buff[i] + OFFSET_Y) * SCALE_FACTOR;
-				ILI9341_DrawPixel(x, prev_y, ILI9341_BLACK);
-				ILI9341_DrawPixel(x, y, ILI9341_WHITE);
+				ILI9341_DrawPixel(x, fft_prev_db_buff[i], ILI9341_BLACK);
+				ILI9341_DrawPixel(x, fft_db_buff[i], ILI9341_WHITE);
 			}
 			fft_prev_db_buff[i] = fft_db_buff[i];
 		}
