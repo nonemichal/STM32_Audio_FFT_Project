@@ -670,8 +670,8 @@ void DisplayOutputTask(void *argument)
 {
   /* USER CODE BEGIN DisplayOutputTask */
 	static int32_t fft_db_buff[ILI9341_HEIGHT] = { 0 };
-	static int32_t fft_prev_db_buff[ILI9341_HEIGHT] = { 0 };
-
+	static int32_t fft_prev_db_buff[ILI9341_HEIGHT] = { 0 }; /* Values from previous execution of this task */
+	int32_t peak_val = 0;
 	/* Infinite loop */
 	for (;;) {
 		osEventFlagsWait(FFTReadyHandle,
@@ -680,7 +680,7 @@ void DisplayOutputTask(void *argument)
 
 		osMutexAcquire(FFTMagMutexHandle, osWaitForever);
 		for (size_t i = 0; i < ILI9341_HEIGHT; i++) {
-			/* FFT Magnitude to decibel scale */
+			/* Get average and FFT magnitude to decibel scale */
 			float32_t avg_val = (fft_mag_buff[i * 2] + fft_mag_buff[i * 2 + 1]) / 2;
 			int32_t log_val = (int32_t) (20 * log10f(avg_val));
 			int32_t scaled_val = (log_val + OFFSET_Y) * SCALE_FACTOR;
@@ -693,6 +693,13 @@ void DisplayOutputTask(void *argument)
 				ILI9341_DrawPixel(x, fft_db_buff[i], ILI9341_WHITE);
 			}
 			fft_prev_db_buff[i] = fft_db_buff[i];
+
+			if (peak_val < fft_db_buff[i]) {
+				peak_val = fft_db_buff[i];
+			}
+
+			const char *str =
+			ILI9341_WriteString(ILI9341_WIDTH, 0, const char* str, Font_7x10, uint16_t color, uint16_t bgcolor);
 		}
 		osMutexRelease(FFTMagMutexHandle);
 	}
