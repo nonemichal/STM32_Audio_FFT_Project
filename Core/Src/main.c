@@ -642,7 +642,7 @@ void FFTProcessingTask(void *argument) {
 /* USER CODE END Header_DisplayOutputTask */
 void DisplayOutputTask(void *argument) {
 	/* USER CODE BEGIN DisplayOutputTask */
-	static int32_t fft_db_buff[ILI9341_HEIGHT] = { 0 };
+	static int32_t fft_db_buff[ILI9341_HEIGHT] = { 0 }; /* Values from current execution of this task */
 	static int32_t fft_prev_db_buff[ILI9341_HEIGHT] = { 0 }; /* Values from previous execution of this task */
 	int32_t peak_index = 0;
 	/* Infinite loop */
