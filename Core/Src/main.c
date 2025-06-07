@@ -42,32 +42,31 @@ typedef enum {
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define TEST 					0
-#define DISPLAY_PEAK			1
+#define TEST                    0                                               /* Test image */
 
-#define AUDIO_FS 				8000.0f 										/* Sampling frequency */
-#define RX_BUFFER_SIZE 			128 											/* Length of audio receive buffer */
-#define DEC_BUFFER_SIZE 		16 												/* Length of audio buffer after decimation */
-#define PCM_BUFFER_SIZE 		1024											/* Length of audio PCM buffer */
-#define NORMALIZED_BUFFER_SIZE 	1024											/* Length of audio normalized buffer */
-#define FFT_LENGTH 				1024											/* Length of FFT samples */
-#define FFT_BUFFER_SIZE 		(FFT_LENGTH + 2) 								/* Length of FFT output buffer */
-#define FFT_MAG_BUFFER_SIZE 	(FFT_BUFFER_SIZE / 2) 							/* Length of FFT magnitude buffer*/
-#define FFT_FR					(2 * AUDIO_FS / FFT_LENGTH)						/* FFT frequency resolution */
+#define AUDIO_FS                8000.0f                                         /* Sampling frequency */
+#define RX_BUFFER_SIZE          128                                             /* Length of audio receive buffer */
+#define DEC_BUFFER_SIZE         16                                              /* Length of audio buffer after decimation */
+#define PCM_BUFFER_SIZE         1024                                            /* Length of audio PCM buffer */
+#define NORMALIZED_BUFFER_SIZE  1024                                            /* Length of audio normalized buffer */
+#define FFT_LENGTH              1024                                            /* Length of FFT samples */
+#define FFT_BUFFER_SIZE         (FFT_LENGTH + 2)                                /* Length of FFT output buffer */
+#define FFT_MAG_BUFFER_SIZE     (FFT_BUFFER_SIZE / 2)                           /* Length of FFT magnitude buffer*/
+#define FFT_FR                  (2 * AUDIO_FS / FFT_LENGTH)                     /* FFT frequency resolution */
 
-#define AUDIO_FLAG_HALF  		0x01											/* Flag for audio half callback */
-#define AUDIO_FLAG_FULL  		0x02											/* Flag for audio full callback */
-#define AUDIO_FLAG_COMPL  		0x04											/* Flag for audio buffer completed  */
-#define FFT_FLAG_COMPL			0x08											/* Flag for FFT buffer completed */
+#define AUDIO_FLAG_HALF         0x01                                            /* Flag for audio half callback */
+#define AUDIO_FLAG_FULL         0x02                                            /* Flag for audio full callback */
+#define AUDIO_FLAG_COMPL        0x04                                            /* Flag for audio buffer completed  */
+#define FFT_FLAG_COMPL          0x08                                            /* Flag for FFT buffer completed */
 
-#define MAX_AUDIO_TASK_COUNTER	(PCM_BUFFER_SIZE / DEC_BUFFER_SIZE) 			/* Max number of audio task execution */
+#define MAX_AUDIO_TASK_COUNTER  (PCM_BUFFER_SIZE / DEC_BUFFER_SIZE)             /* Max number of audio task execution */
 
-#define OFFSET_Y 				40 												/* Offset of display */
-#define SCALE_FACTOR 			2												/* Scale factor of display */
-#define FONT_WIDTH				7												/* Font width */
-#define STRING_SIZE 			12												/* Size of string buffer */
-#define STRING_POS_X			(ILI9341_WIDTH - (STRING_SIZE * FONT_WIDTH))	/* Position X of string on display */
-#define STRING_POS_Y			(ILI9341_HEIGHT / 6)							/* Position Y of string on display */
+#define OFFSET_Y                40                                              /* Offset of display */
+#define SCALE_FACTOR            2                                               /* Scale factor of display */
+#define FONT_WIDTH              7                                               /* Font width */
+#define STRING_SIZE             12                                              /* Size of string buffer */
+#define STRING_POS_X            (ILI9341_WIDTH - (STRING_SIZE * FONT_WIDTH))    /* Position X of string on display */
+#define STRING_POS_Y            (ILI9341_HEIGHT / 6)                            /* Position Y of string on display */
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -114,13 +113,13 @@ osEventFlagsId_t AudioBuffReadyHandle;
 const osEventFlagsAttr_t AudioBuffReady_attributes =
 		{ .name = "AudioBuffReady" };
 /* USER CODE BEGIN PV */
-arm_rfft_fast_instance_f32 fft_audio_instance = { 0 }; 		/* Instance FFT structure */
+arm_rfft_fast_instance_f32 fft_audio_instance = { 0 }; /* Instance FFT structure */
 
-uint16_t rx_buff[RX_BUFFER_SIZE] = { 0 }; 					/* Audio receive buffer */
-float32_t normalized_buff[NORMALIZED_BUFFER_SIZE] = { 0 }; 	/* Audio normalized buffer */
+uint16_t rx_buff[RX_BUFFER_SIZE] = { 0 }; /* Audio receive buffer */
+float32_t normalized_buff[NORMALIZED_BUFFER_SIZE] = { 0 }; /* Audio normalized buffer */
 
-float32_t hann_table[NORMALIZED_BUFFER_SIZE] = { 0 }; 		/* Hann window multipliers */
-float32_t fft_mag_buff[FFT_MAG_BUFFER_SIZE] = { 0 }; 		/* FFT Magnitude buffer */
+float32_t hann_table[NORMALIZED_BUFFER_SIZE] = { 0 }; /* Hann window multipliers */
+float32_t fft_mag_buff[FFT_MAG_BUFFER_SIZE] = { 0 }; /* FFT Magnitude buffer */
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -568,10 +567,10 @@ void fft_compute(float32_t *windowed_buff, float32_t *fft_mag_buff) {
 /* USER CODE END Header_AudioCaptureTask */
 void AudioCaptureTask(void *argument) {
 	/* USER CODE BEGIN 5 */
-	uint16_t audio_task_counter = 0;					/* Counts how many times task executed */
-	static uint16_t dec_buff[DEC_BUFFER_SIZE] = { 0 }; 	/* Audio buffer after decimation */
-	static int16_t pcm_buff[PCM_BUFFER_SIZE] = { 0 }; 	/* PCM audio buffer */
-	Buffer_offset buffer_offset = BUFFER_OFFSET_NONE;	/* Offset of writing to buffer */
+	uint16_t audio_task_counter = 0; /* Counts how many times task executed */
+	static uint16_t dec_buff[DEC_BUFFER_SIZE] = { 0 }; /* Audio buffer after decimation */
+	static int16_t pcm_buff[PCM_BUFFER_SIZE] = { 0 }; /* PCM audio buffer */
+	Buffer_offset buffer_offset = BUFFER_OFFSET_NONE; /* Offset of writing to buffer */
 
 	/* Infinite loop */
 	for (;;) {
@@ -651,8 +650,8 @@ void FFTProcessingTask(void *argument) {
 /* USER CODE END Header_DisplayOutputTask */
 void DisplayOutputTask(void *argument) {
 	/* USER CODE BEGIN DisplayOutputTask */
-	static int32_t fft_db_buff[ILI9341_HEIGHT] = { 0 }; 		/* Values from current execution of this task */
-	static int32_t fft_prev_db_buff[ILI9341_HEIGHT] = { 0 };	/* Values from previous execution of this task */
+	static int32_t fft_db_buff[ILI9341_HEIGHT] = { 0 }; /* Values from current execution of this task */
+	static int32_t fft_prev_db_buff[ILI9341_HEIGHT] = { 0 }; /* Values from previous execution of this task */
 	/* Infinite loop */
 	for (;;) {
 		osEventFlagsWait(FFTReadyHandle,
